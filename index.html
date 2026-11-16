@@ -1253,16 +1253,50 @@ mark{background:#ffe57a;color:inherit;border-radius:2px;padding:0 1px}
   }
 
   function applySearch(S){
-    window.__SEARCH = S;
-    var v = (S.video || []).filter(function(e){ return e[4]; }).reverse();
-    SP.videos = v.map(function(e){ return MURL('media/video/' + e[4] + '.mp4'); });
-    SP.vidMap = {};
-    for (var k=0;k<v.length;k++) SP.vidMap[v[k][4]] = k;
+    var cur = window.__SEARCH || {};
+    for (var k in S){
+      if (Object.prototype.hasOwnProperty.call(S, k)) cur[k] = S[k];
+    }
+    window.__SEARCH = cur;
+    if (cur.video){
+      var v = cur.video.filter(function(e){ return e[4]; }).reverse();
+      SP.videos = v.map(function(e){ return MURL('media/video/' + e[4] + '.mp4'); });
+      SP.vidMap = {};
+      for (var j=0;j<v.length;j++) SP.vidMap[v[j][4]] = j;
+    }
+    return cur;
+  }
+
+  function fetchJSON(path){
+    return fetch(path, {cache: 'no-store'}).then(function(r){
+      if (!r.ok) throw new Error('http ' + r.status);
+      return r.json();
+    });
+  }
+
+  function loadSearchMedia(){
+    if (window.__SEARCH && window.__SEARCH.media) return Promise.resolve(window.__SEARCH);
+    if (SP.mPending) return SP.mPending;
+    if (location.protocol === 'file:' || !window.fetch) return loadSearchData();
+    SP.mPending = fetchJSON('data/search_media.json').then(applySearch).catch(function(){
+      return loadSearchData();
+    });
+    return SP.mPending;
+  }
+
+  function loadSearchText(){
+    if (window.__SEARCH && window.__SEARCH.text) return Promise.resolve(window.__SEARCH);
+    if (SP.tPending) return SP.tPending;
+    if (location.protocol === 'file:' || !window.fetch) return loadSearchData();
+    SP.tPending = fetchJSON('data/search_text.json').then(applySearch).catch(function(){
+      return loadSearchData();
+    });
+    return SP.tPending;
   }
 
   function loadSearchData(){
     if (window.__SEARCH && !SP.videos) applySearch(window.__SEARCH);
-    if (window.__SEARCH) return Promise.resolve(window.__SEARCH);
+    if (window.__SEARCH && window.__SEARCH.text) return Promise.resolve(window.__SEARCH);
     if (SP.pending) return SP.pending;
     SP.pending = new Promise(function(resolve, reject){
       function ok(S){
@@ -1300,12 +1334,14 @@ mark{background:#ffe57a;color:inherit;border-radius:2px;padding:0 1px}
     SP.shown = 0;
     setTab('all', true);
     spBody.innerHTML = '<div class="sp-hint">正在加载聊天记录索引…</div>';
-    loadSearchData().then(function(){
-      renderTab();
+    loadSearchMedia().then(function(){
+      if (SP.tab === 'media') renderTab();
+      return loadSearchText();
+    }).then(function(){
+      if (SP.tab !== 'media') renderTab();
     }).catch(function(){
-      spBody.innerHTML = '<div class="sp-hint">索引加载失败，请检查网络后重试<br><button class="sp-retry" id="spRetry">重试</button></div>';
-      var rb = document.getElementById('spRetry');
-      if (rb) rb.addEventListener('click', openSearch);
+      SP.mPending = SP.tPending = null;
+      showIndexError();
     });
   }
   function closeSearch(){ searchPanel.classList.remove('show'); }
@@ -1321,9 +1357,33 @@ mark{background:#ffe57a;color:inherit;border-radius:2px;padding:0 1px}
 
   function renderTab(){
     spBody.scrollTop = 0;
+    var S = window.__SEARCH || {};
     if (SP.tab === 'date') return renderDateTab();
-    if (SP.tab === 'media') return renderMediaTab();
+    if (SP.tab === 'media'){
+      if (!S.media) return pendingTab(loadSearchMedia);
+      return renderMediaTab();
+    }
+    if (!S.text) return pendingTab(loadSearchText);
     return renderListTab();
+  }
+
+  function pendingTab(loader){
+    spBody.innerHTML = '<div class="sp-hint">正在加载…</div>';
+    loader().then(function(){
+      var S = window.__SEARCH || {};
+      var ready = SP.tab === 'media' ? !!S.media : !!S.text;
+      if (ready){ renderTab(); return; }
+      showIndexError();
+    }).catch(function(){
+      SP.mPending = SP.tPending = null;
+      showIndexError();
+    });
+  }
+
+  function showIndexError(){
+    spBody.innerHTML = '<div class="sp-hint">索引加载失败，请检查网络后重试<br><button class="sp-retry" id="spRetry">重试</button></div>';
+    var rb = document.getElementById('spRetry');
+    if (rb) rb.addEventListener('click', openSearch);
   }
 
   function listData(){
@@ -1738,11 +1798,11 @@ mark{background:#ffe57a;color:inherit;border-radius:2px;padding:0 1px}
       cell.classList.add('gehit');
       setTimeout(function(){ cell.classList.remove('gehit'); }, 2600);
     };
-    if (window.__SEARCH) run();
+    if (window.__SEARCH && window.__SEARCH.media) run();
     else {
       spBody.innerHTML = '<div class="sp-hint">正在加载聊天记录索引…</div>';
-      loadSearchData().then(run).catch(function(){
-        spBody.innerHTML = '<div class="sp-hint">索引加载失败，请确认 data/search.js 是否存在</div>';
+      loadSearchMedia().then(run).catch(function(){
+        spBody.innerHTML = '<div class="sp-hint">索引加载失败，请检查网络后重试</div>';
       });
     }
   }
@@ -1769,7 +1829,7 @@ mark{background:#ffe57a;color:inherit;border-radius:2px;padding:0 1px}
       gotoMsg(ts);
     };
     if (window.__SEARCH) go();
-    else loadSearchData().then(go).catch(function(){ toast('这条在聊天里找不到位置'); });
+    else loadSearchMedia().then(go).catch(function(){ toast('这条在聊天里找不到位置'); });
   }
   function openMediaMenu(info){
     mmInfo = info;
