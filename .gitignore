@@ -1,0 +1,6 @@
+serve.py
+*.zip
+*.log
+gh_token.txt
+.uploads/
+media/video/*.mp4
